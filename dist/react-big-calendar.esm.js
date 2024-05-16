@@ -202,6 +202,15 @@ function isJustDate(date) {
     dates.milliseconds(date) === 0
   )
 }
+function duration(start, end, unit, firstOfWeek) {
+  if (unit === 'day') unit = 'date'
+  return Math.abs(
+    // eslint-disable-next-line import/namespace
+    dates[unit](start, undefined, firstOfWeek) -
+      // eslint-disable-next-line import/namespace
+      dates[unit](end, undefined, firstOfWeek)
+  )
+}
 function diff(dateA, dateB, unit) {
   if (!unit || unit === 'milliseconds') return Math.abs(+dateA - +dateB)
 
@@ -272,6 +281,9 @@ function continuesAfter(start, end, last) {
     ? gte(end, last, 'minutes')
     : gt(end, last, 'minutes')
 }
+function daySpan(start, end) {
+  return duration(start, end, 'day')
+}
 
 // These two are used by eventLevels
 function sortEvents$1(_ref) {
@@ -284,12 +296,12 @@ function sortEvents$1(_ref) {
     bEnd = _ref$evtB.end,
     bAllDay = _ref$evtB.allDay
   var startSort = +startOf(aStart, 'day') - +startOf(bStart, 'day')
-  var durA = diff(aStart, ceil(aEnd, 'day'), 'day')
-  var durB = diff(bStart, ceil(bEnd, 'day'), 'day')
+  var durA = daySpan(aStart, aEnd)
+  var durB = daySpan(bStart, bEnd)
   return (
     startSort ||
     // sort by start Day first
-    Math.max(durB, 1) - Math.max(durA, 1) ||
+    durB - durA ||
     // events spanning multiple days go first
     !!bAllDay - !!aAllDay ||
     // then allDay single day events
@@ -367,6 +379,7 @@ var DateLocalizer = /*#__PURE__*/ _createClass(function DateLocalizer(spec) {
   this.min = spec.min || min
   this.max = spec.max || max
   this.minutes = spec.minutes || minutes
+  this.daySpan = spec.daySpan || daySpan
   this.firstVisibleDay = spec.firstVisibleDay || firstVisibleDay
   this.lastVisibleDay = spec.lastVisibleDay || lastVisibleDay
   this.visibleDays = spec.visibleDays || visibleDays
@@ -490,7 +503,7 @@ var EventCell = /*#__PURE__*/ (function (_React$Component) {
           isAllDay = _this$props.isAllDay,
           onSelect = _this$props.onSelect,
           _onDoubleClick = _this$props.onDoubleClick,
-          _onKeyPress = _this$props.onKeyPress,
+          onKeyPress = _this$props.onKeyPress,
           localizer = _this$props.localizer,
           continuesPrior = _this$props.continuesPrior,
           continuesAfter = _this$props.continuesAfter,
@@ -541,7 +554,6 @@ var EventCell = /*#__PURE__*/ (function (_React$Component) {
           /*#__PURE__*/ React.createElement(
             'div',
             Object.assign({}, props, {
-              tabIndex: 0,
               style: _objectSpread(_objectSpread({}, userProps.style), style),
               className: clsx('rbc-event', className, userProps.className, {
                 'rbc-selected': selected,
@@ -555,8 +567,8 @@ var EventCell = /*#__PURE__*/ (function (_React$Component) {
               onDoubleClick: function onDoubleClick(e) {
                 return _onDoubleClick && _onDoubleClick(event, e)
               },
-              onKeyPress: function onKeyPress(e) {
-                return _onKeyPress && _onKeyPress(event, e)
+              onKeyDown: function onKeyDown(e) {
+                return onKeyPress && onKeyPress(event, e)
               },
             }),
             typeof children === 'function' ? children(content) : content
@@ -996,6 +1008,8 @@ var Selection = /*#__PURE__*/ (function () {
       targetHostMarker =
         _ref3$targetHostMarke === void 0 ? null : _ref3$targetHostMarke
     _classCallCheck(this, Selection)
+    this._initialEvent = null
+    this.selecting = false
     this.isDetached = false
     this.container = node
     this.globalMouse = !node || global
@@ -1083,6 +1097,11 @@ var Selection = /*#__PURE__*/ (function () {
     {
       key: 'teardown',
       value: function teardown() {
+        this._initialEvent = null
+        this._initialEventData = null
+        this._selectRect = null
+        this.selecting = false
+        this._lastClickData = null
         this.isDetached = true
         this._listeners = Object.create(null)
         this._removeTouchMoveWindowListener &&
@@ -1249,6 +1268,7 @@ var Selection = /*#__PURE__*/ (function () {
     {
       key: '_handleInitialEvent',
       value: function _handleInitialEvent(e) {
+        this._initialEvent = e
         if (this.isDetached) {
           return
         }
@@ -1353,38 +1373,41 @@ var Selection = /*#__PURE__*/ (function () {
     {
       key: '_handleTerminatingEvent',
       value: function _handleTerminatingEvent(e) {
-        var _getEventCoordinates4 = getEventCoordinates(e),
-          pageX = _getEventCoordinates4.pageX,
-          pageY = _getEventCoordinates4.pageY
+        var selecting = this.selecting
+        var bounds = this._selectRect
+        // If it's not in selecting state, it's a click event
+        if (!selecting && e.type.includes('key')) {
+          e = this._initialEvent
+        }
         this.selecting = false
         this._removeEndListener && this._removeEndListener()
         this._removeMoveListener && this._removeMoveListener()
-        if (!this._initialEventData) return
+        this._selectRect = null
+        this._initialEvent = null
+        this._initialEventData = null
+        if (!e) return
         var inRoot = !this.container || contains(this.container(), e.target)
         var isWithinValidContainer = this._isWithinValidContainer(e)
-        var bounds = this._selectRect
-        var click = this.isClick(pageX, pageY)
-        this._initialEventData = null
         if (e.key === 'Escape' || !isWithinValidContainer) {
           return this.emit('reset')
         }
-        if (click && inRoot) {
+        if (!selecting && inRoot) {
           return this._handleClickEvent(e)
         }
 
         // User drag-clicked in the Selectable area
-        if (!click) return this.emit('select', bounds)
+        if (selecting) return this.emit('select', bounds)
         return this.emit('reset')
       },
     },
     {
       key: '_handleClickEvent',
       value: function _handleClickEvent(e) {
-        var _getEventCoordinates5 = getEventCoordinates(e),
-          pageX = _getEventCoordinates5.pageX,
-          pageY = _getEventCoordinates5.pageY,
-          clientX = _getEventCoordinates5.clientX,
-          clientY = _getEventCoordinates5.clientY
+        var _getEventCoordinates4 = getEventCoordinates(e),
+          pageX = _getEventCoordinates4.pageX,
+          pageY = _getEventCoordinates4.pageY,
+          clientX = _getEventCoordinates4.clientX,
+          clientY = _getEventCoordinates4.clientY
         var now = new Date().getTime()
         if (
           this._lastClickData &&
@@ -1421,34 +1444,35 @@ var Selection = /*#__PURE__*/ (function () {
         var _this$_initialEventDa = this._initialEventData,
           x = _this$_initialEventDa.x,
           y = _this$_initialEventDa.y
-        var _getEventCoordinates6 = getEventCoordinates(e),
-          pageX = _getEventCoordinates6.pageX,
-          pageY = _getEventCoordinates6.pageY
+        var _getEventCoordinates5 = getEventCoordinates(e),
+          pageX = _getEventCoordinates5.pageX,
+          pageY = _getEventCoordinates5.pageY
         var w = Math.abs(x - pageX)
         var h = Math.abs(y - pageY)
         var left = Math.min(pageX, x),
           top = Math.min(pageY, y),
           old = this.selecting
-
+        var click = this.isClick(pageX, pageY)
         // Prevent emitting selectStart event until mouse is moved.
         // in Chrome on Windows, mouseMove event may be fired just after mouseDown event.
-        if (this.isClick(pageX, pageY) && !old && !(w || h)) {
+        if (click && !old && !(w || h)) {
           return
         }
-        this.selecting = true
-        this._selectRect = {
-          top: top,
-          left: left,
-          x: pageX,
-          y: pageY,
-          right: left + w,
-          bottom: top + h,
-        }
-        if (!old) {
+        if (!old && !click) {
           this.emit('selectStart', this._initialEventData)
         }
-        if (!this.isClick(pageX, pageY))
+        if (!click) {
+          this.selecting = true
+          this._selectRect = {
+            top: top,
+            left: left,
+            x: pageX,
+            y: pageY,
+            right: left + w,
+            bottom: top + h,
+          }
           this.emit('selecting', this._selectRect)
+        }
         e.preventDefault()
       },
     },
@@ -1966,6 +1990,30 @@ function segsOverlap(seg, otherSegs) {
     return otherSeg.left <= seg.right && otherSeg.right >= seg.left
   })
 }
+function sortWeekEvents(events, accessors, localizer) {
+  var base = _toConsumableArray(events)
+  var multiDayEvents = []
+  var standardEvents = []
+  base.forEach(function (event) {
+    var startCheck = accessors.start(event)
+    var endCheck = accessors.end(event)
+    if (localizer.daySpan(startCheck, endCheck) > 1) {
+      multiDayEvents.push(event)
+    } else {
+      standardEvents.push(event)
+    }
+  })
+  var multiSorted = multiDayEvents.sort(function (a, b) {
+    return sortEvents(a, b, accessors, localizer)
+  })
+  var standardSorted = standardEvents.sort(function (a, b) {
+    return sortEvents(a, b, accessors, localizer)
+  })
+  return [].concat(
+    _toConsumableArray(multiSorted),
+    _toConsumableArray(standardSorted)
+  )
+}
 function sortEvents(eventA, eventB, accessors, localizer) {
   var evtA = {
     start: accessors.start(eventA),
@@ -1987,9 +2035,13 @@ var isSegmentInSlot$1 = function isSegmentInSlot(seg, slot) {
   return seg.left <= slot && seg.right >= slot
 }
 var eventsInSlot = function eventsInSlot(segments, slot) {
-  return segments.filter(function (seg) {
-    return isSegmentInSlot$1(seg, slot)
-  }).length
+  return segments
+    .filter(function (seg) {
+      return isSegmentInSlot$1(seg, slot)
+    })
+    .map(function (seg) {
+      return seg.event
+    })
 }
 var EventEndingRow = /*#__PURE__*/ (function (_React$Component) {
   _inherits(EventEndingRow, _React$Component)
@@ -2061,7 +2113,7 @@ var EventEndingRow = /*#__PURE__*/ (function (_React$Component) {
       value: function canRenderSlotEvent(slot, span) {
         var segments = this.props.segments
         return range$1(slot, slot + span).every(function (s) {
-          var count = eventsInSlot(segments, s)
+          var count = eventsInSlot(segments, s).length
           return count === 1
         })
       },
@@ -2070,8 +2122,12 @@ var EventEndingRow = /*#__PURE__*/ (function (_React$Component) {
       key: 'renderShowMore',
       value: function renderShowMore(segments, slot) {
         var _this = this
-        var localizer = this.props.localizer
-        var count = eventsInSlot(segments, slot)
+        var _this$props2 = this.props,
+          localizer = _this$props2.localizer,
+          slotMetrics = _this$props2.slotMetrics
+        var events = slotMetrics.getEventsForSlot(slot)
+        var remainingEvents = eventsInSlot(segments, slot)
+        var count = remainingEvents.length
         return count
           ? /*#__PURE__*/ React.createElement(
               'button',
@@ -2083,7 +2139,7 @@ var EventEndingRow = /*#__PURE__*/ (function (_React$Component) {
                   return _this.showMore(slot, e)
                 },
               },
-              localizer.messages.showMore(count)
+              localizer.messages.showMore(count, remainingEvents, events)
             )
           : false
       },
@@ -2537,9 +2593,7 @@ var MonthView = /*#__PURE__*/ (function (_React$Component) {
         accessors,
         localizer
       )
-      weeksEvents.sort(function (a, b) {
-        return sortEvents(a, b, accessors, localizer)
-      })
+      var sorted = sortWeekEvents(weeksEvents, accessors, localizer)
       return /*#__PURE__*/ React.createElement(DateContentRow, {
         key: weekIdx,
         ref: weekIdx === 0 ? _this.slotRowRef : undefined,
@@ -2548,7 +2602,7 @@ var MonthView = /*#__PURE__*/ (function (_React$Component) {
         getNow: getNow,
         date: date,
         range: week,
-        events: weeksEvents,
+        events: sorted,
         maxRows: showAllEvents ? Infinity : rowLimit,
         selected: selected,
         selectable: selectable,
@@ -3013,9 +3067,19 @@ function getSlotMetrics(_ref2) {
       )
     },
     nextSlot: function nextSlot(slot) {
-      var next = slots[Math.min(slots.indexOf(slot) + 1, slots.length - 1)]
+      // We cannot guarantee that the slot object must be in slots,
+      // because after each update, a new slots array will be created.
+      var next =
+        slots[
+          Math.min(
+            slots.findIndex(function (s) {
+              return s === slot || localizer.eq(s, slot)
+            }) + 1,
+            slots.length - 1
+          )
+        ]
       // in the case of the last slot we won't a long enough range so manually get it
-      if (next === slot) next = localizer.add(slot, step, 'minutes')
+      if (localizer.eq(next, slot)) next = localizer.add(slot, step, 'minutes')
       return next
     },
     closestSlotToPosition: function closestSlotToPosition(percent) {
@@ -3105,10 +3169,6 @@ function TimeGridEvent(props) {
   var end = accessors.end(event)
   var start = accessors.start(event)
   var userProps = getters.eventProp(event, start, end, selected)
-  var height = style.height,
-    top = style.top,
-    width = style.width,
-    xOffset = style.xOffset
   var inner = [
     /*#__PURE__*/ React.createElement(
       'div',
@@ -3132,34 +3192,23 @@ function TimeGridEvent(props) {
         : title
     ),
   ]
-  var eventStyle = isBackgroundEvent
-    ? _objectSpread(
-        _objectSpread({}, userProps.style),
-        {},
-        _defineProperty(
-          {
-            top: stringifyPercent(top),
-            height: stringifyPercent(height),
-            // Adding 10px to take events container right margin into account
-            width: 'calc('.concat(width, ' + 10px)'),
-          },
-          rtl ? 'right' : 'left',
-          stringifyPercent(Math.max(0, xOffset))
-        )
-      )
-    : _objectSpread(
-        _objectSpread({}, userProps.style),
-        {},
-        _defineProperty(
-          {
-            top: stringifyPercent(top),
-            width: stringifyPercent(width),
-            height: stringifyPercent(height),
-          },
-          rtl ? 'right' : 'left',
-          stringifyPercent(xOffset)
-        )
-      )
+  var height = style.height,
+    top = style.top,
+    width = style.width,
+    xOffset = style.xOffset
+  var eventStyle = _objectSpread(
+    _objectSpread({}, userProps.style),
+    {},
+    _defineProperty(
+      {
+        top: stringifyPercent(top),
+        height: stringifyPercent(height),
+        width: stringifyPercent(width),
+      },
+      rtl ? 'right' : 'left',
+      stringifyPercent(xOffset)
+    )
+  )
   return /*#__PURE__*/ React.createElement(
     EventWrapper,
     Object.assign(
@@ -3176,7 +3225,7 @@ function TimeGridEvent(props) {
         onClick: onClick,
         onDoubleClick: onDoubleClick,
         style: eventStyle,
-        onKeyPress: onKeyPress,
+        onKeyDown: onKeyPress,
         title: tooltip
           ? (typeof label === 'string' ? label + ': ' : '') + tooltip
           : undefined,
@@ -3510,7 +3559,9 @@ function noOverlap(_ref) {
     a = a.style
     b = b.style
     if (a.top !== b.top) return a.top > b.top ? 1 : -1
-    else return a.top + a.height < b.top + b.height ? 1 : -1
+    else if (a.height !== b.height)
+      return a.top + a.height < b.top + b.height ? 1 : -1
+    else return 0
   })
   for (var i = 0; i < styledEvents.length; ++i) {
     styledEvents[i].friends = []
@@ -3716,10 +3767,14 @@ var DayColumn = /*#__PURE__*/ (function (_React$Component) {
           onClick: function onClick(e) {
             return _this._select(
               _objectSpread(
-                _objectSpread({}, event),
-                {},
-                {
-                  sourceResource: _this.props.resource,
+                _objectSpread(
+                  _objectSpread({}, event),
+                  _this.props.resource && {
+                    sourceResource: _this.props.resource,
+                  }
+                ),
+                isBackgroundEvent && {
+                  isBackgroundEvent: true,
                 }
               ),
               e
@@ -3940,17 +3995,11 @@ var DayColumn = /*#__PURE__*/ (function (_React$Component) {
       },
     },
     {
-      key: 'UNSAFE_componentWillReceiveProps',
-      value: function UNSAFE_componentWillReceiveProps(nextProps) {
-        if (nextProps.selectable && !this.props.selectable) this._selectable()
-        if (!nextProps.selectable && this.props.selectable)
-          this._teardownSelectable()
-        this.slotMetrics = this.slotMetrics.update(nextProps)
-      },
-    },
-    {
       key: 'componentDidUpdate',
       value: function componentDidUpdate(prevProps, prevState) {
+        if (this.props.selectable && !prevProps.selectable) this._selectable()
+        if (!this.props.selectable && prevProps.selectable)
+          this._teardownSelectable()
         var _this$props3 = this.props,
           getNow = _this$props3.getNow,
           isNow = _this$props3.isNow,
@@ -4051,6 +4100,7 @@ var DayColumn = /*#__PURE__*/ (function (_React$Component) {
             _this$props5$componen,
             _excluded2$1
           )
+        this.slotMetrics = this.slotMetrics.update(this.props)
         var slotMetrics = this.slotMetrics
         var _this$state = this.state,
           selecting = _this$state.selecting,
@@ -4527,7 +4577,7 @@ var TimeGridHeader = /*#__PURE__*/ (function (_React$Component) {
                 onSelect: _this3.props.onSelectEvent,
                 onShowMore: _this3.props.onShowMore,
                 onDoubleClick: _this3.props.onDoubleClickEvent,
-                onKeyPress: _this3.props.onKeyPressEvent,
+                onKeyDown: _this3.props.onKeyPressEvent,
                 onSelectSlot: _this3.props.onSelectSlot,
                 longPressThreshold: _this3.props.longPressThreshold,
                 resizable: resizable,
@@ -6501,6 +6551,12 @@ function moment(moment) {
     var mLast = moment(last)
     return mEnd.isSameOrAfter(mLast, 'minutes')
   }
+  function daySpan(start, end) {
+    var mStart = moment(start)
+    var mEnd = moment(end)
+    var dur = moment.duration(mEnd.diff(mStart))
+    return dur.days()
+  }
 
   // These two are used by eventLevels
   function sortEvents(_ref6) {
@@ -6513,12 +6569,12 @@ function moment(moment) {
       bEnd = _ref6$evtB.end,
       bAllDay = _ref6$evtB.allDay
     var startSort = +startOf(aStart, 'day') - +startOf(bStart, 'day')
-    var durA = diff(aStart, ceil(aEnd, 'day'), 'day')
-    var durB = diff(bStart, ceil(bEnd, 'day'), 'day')
+    var durA = daySpan(aStart, aEnd)
+    var durB = daySpan(bStart, bEnd)
     return (
       startSort ||
       // sort by start Day first
-      Math.max(durB, 1) - Math.max(durA, 1) ||
+      durB - durA ||
       // events spanning multiple days go first
       !!bAllDay - !!aAllDay ||
       // then allDay single day events
@@ -6609,6 +6665,7 @@ function moment(moment) {
     sortEvents: sortEvents,
     inEventRange: inEventRange,
     isSameDate: isSameDate,
+    daySpan: daySpan,
     browserTZOffset: browserTZOffset,
   })
 }
@@ -6968,6 +7025,11 @@ function luxon(DateTime) {
   function continuesAfter(start, end, last) {
     return gte(end, last)
   }
+  function daySpan(start, end) {
+    var dtStart = DateTime.fromJSDate(start)
+    var dtEnd = DateTime.fromJSDate(end)
+    return dtEnd.diff(dtStart).as('days')
+  }
 
   // These two are used by eventLevels
   function sortEvents(_ref7) {
@@ -6980,12 +7042,12 @@ function luxon(DateTime) {
       bEnd = _ref7$evtB.end,
       bAllDay = _ref7$evtB.allDay
     var startSort = +startOf(aStart, 'day') - +startOf(bStart, 'day')
-    var durA = diff(aStart, ceil(aEnd, 'day'), 'day')
-    var durB = diff(bStart, ceil(bEnd, 'day'), 'day')
+    var durA = daySpan(aStart, aEnd)
+    var durB = daySpan(bStart, bEnd)
     return (
       startSort ||
       // sort by start Day first
-      Math.max(durB, 1) - Math.max(durA, 1) ||
+      durB - durA ||
       // events spanning multiple days go first
       !!bAllDay - !!aAllDay ||
       // then allDay single day events
@@ -7077,6 +7139,7 @@ function luxon(DateTime) {
     sortEvents: sortEvents,
     inEventRange: inEventRange,
     isSameDate: isSameDate,
+    daySpan: daySpan,
     browserTZOffset: browserTZOffset,
   })
 }
@@ -7691,6 +7754,11 @@ function dayjs(dayjsLib) {
     var djLast = dayjs(last)
     return djEnd.isSameOrAfter(djLast, 'minutes')
   }
+  function daySpan(start, end) {
+    var startDay = dayjs(start)
+    var endDay = dayjs(end)
+    return endDay.diff(startDay, 'day')
+  }
 
   // These two are used by eventLevels
   function sortEvents(_ref6) {
@@ -7703,12 +7771,12 @@ function dayjs(dayjsLib) {
       bEnd = _ref6$evtB.end,
       bAllDay = _ref6$evtB.allDay
     var startSort = +startOf(aStart, 'day') - +startOf(bStart, 'day')
-    var durA = diff(aStart, ceil(aEnd, 'day'), 'day')
-    var durB = diff(bStart, ceil(bEnd, 'day'), 'day')
+    var durA = daySpan(aStart, aEnd)
+    var durB = daySpan(bStart, bEnd)
     return (
       startSort ||
       // sort by start Day first
-      Math.max(durB, 1) - Math.max(durA, 1) ||
+      durB - durA ||
       // events spanning multiple days go first
       !!bAllDay - !!aAllDay ||
       // then allDay single day events

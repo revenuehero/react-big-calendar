@@ -222,6 +222,11 @@ button.rbc-input::-moz-focus-inner {
   margin-left: 10px;
 }
 
+@media (max-width: 767px) {
+  .rbc-toolbar {
+    flex-direction: column;
+  }
+}
 .rbc-event,
 .rbc-day-slot .rbc-background-event {
   border: none;

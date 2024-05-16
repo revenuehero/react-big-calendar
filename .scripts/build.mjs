@@ -7,7 +7,7 @@ const {
 
 if (b) {
   // Update browserslist
-  await $`npx update-browserslist-db@latest`
+  await $`npx browserslist@latest --update-db`
 }
 
 console.log(chalk.blue('[BEGIN BUILD]'))
